@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" x-data="appState()" x-init="init()">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>香港一日遊導航 🇭🇰 (GitHub Pages 版)</title>
+    <meta name="description" content="香港 24 個必訪食玩景點地圖，附智慧一日行程規劃器">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet.js -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Alpine.js -->
+    <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap"
+        rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { tc: ['Noto Sans TC', 'sans-serif'] },
+                    colors: {
+                        cream: '#FFF8F0',
+                        orange: { DEFAULT: '#FF6B35', dark: '#E55A25' },
+                        coral: { DEFAULT: '#E63946', dark: '#C62B37' },
+                        lav: { DEFAULT: '#9B72CF', bg: '#F5F0FD', border: '#E9E0F8' },
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background: #FFF8F0;
+        }
+
+        /* ===== Map ===== */
+        #map {
+            width: 100%;
+            height: 100%;
+            cursor: crosshair !important;
+        }
+
+        /* ===== Custom Markers ===== */
+        .pin-wrap {
+            position: relative;
+            width: 32px;
+            height: 36px;
+        }
+
+        .pin-dot {
+            width: 26px;
+            height: 26px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            border: 2.5px solid white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .pin-label {
+            position: absolute;
+            top: -26px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border-radius: 8px;
+            padding: 2px 6px;
+            font-size: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+            color: #333;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+            max-width: 130px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .leaflet-marker-icon:hover .pin-label {
+            opacity: 1;
+        }
+
+        .pin-selected .pin-dot {
+            background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+            box-shadow: 0 0 0 5px rgba(34, 197, 94, 0.35), 0 8px 16px rgba(0, 0, 0, 0.3) !important;
+            transform: rotate(-45deg) scale(1.15);
+        }
+
+        /* ===== Leaflet popup ===== */
+        .leaflet-popup-content-wrapper {
+            border-radius: 16px !important;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18) !important;
+            padding: 0 !important;
+            overflow: hidden;
+            border: none !important;
+        }
+
+        .leaflet-popup-content {
+            margin: 0 !important;
+            width: 280px !important;
+        }
+
+        .leaflet-popup-tip {
+            background: white !important;
+        }
+
+        /* ===== Scrollbar ===== */
+        .thin-scroll::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .thin-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .thin-scroll::-webkit-scrollbar-thumb {
+            background: #e5dada;
+            border-radius: 99px;
+        }
+
+        /* ===== Animations ===== */
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(12px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-up {
+            animation: fadeUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        /* ===== Mobile bottom sheet ===== */
+        @media (max-width: 768px) {
+            #main-layout {
+                flex-direction: column !important;
+            }
+
+            #side-panel {
+                width: 100% !important;
+                height: 50vh;
+                border-right: none !important;
+                border-top: 2px solid #E9E0F8;
+            }
+
+            #map-wrap {
+                flex: 1 !important;
+                min-height: 50vh;
+            }
+        }
+    </style>
+</head>
+
+<body class="h-screen flex flex-col overflow-hidden font-tc">
+
+    <!-- ===== HEADER ===== -->
+    <header
+        class="flex-shrink-0 z-20 bg-gradient-to-r from-orange to-coral text-white px-5 py-3.5 flex items-center justify-between shadow-[0_4px_20px_rgba(255,107,53,0.3)]">
+        <div class="flex items-center gap-4">
+            <span class="text-3xl filter drop-shadow-md">🇭🇰</span>
+            <div>
+                <h1 class="text-xl font-black tracking-tight leading-tight">香港一日遊導航</h1>
+                <p class="text-orange-100 text-[10px] items-center flex gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-green-400 animate-pulse"></span>
+                    GitHub Pages 靜態最佳化版本
+                </p>
+            </div>
+        </div>
+        <div class="hidden sm:flex gap-2 text-[10px] font-bold uppercase tracking-wider">
+            <span class="bg-white/20 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5">🍜 美食</span>
+            <span class="bg-white/20 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5">📸 景點</span>
+            <span class="bg-white/20 backdrop-blur-md border border-white/10 rounded-lg px-3 py-1.5">🛍️ 購物</span>
+        </div>
+    </header>
+
+    <!-- ===== MAIN (left panel + right map) ===== -->
+    <main id="main-layout" class="flex-1 flex overflow-hidden">
+
+        <!-- ===== LEFT PANEL (320px) ===== -->
+        <aside id="side-panel"
+            class="w-[340px] flex-shrink-0 bg-lav-bg border-r border-lav-border flex flex-col overflow-hidden z-10 shadow-2xl relative">
+
+            <!-- Panel tabs -->
+            <div class="flex-shrink-0 bg-white border-b border-lav-border px-5 pt-5 pb-0">
+                <h2 class="font-black text-stone-800 text-sm mb-4 tracking-tight">📅 行程自動規劃系統</h2>
+                <div class="flex gap-1">
+                    <button @click="activeTab='detail'"
+                        :class="activeTab==='detail' ? 'bg-orange text-white shadow-lg shadow-orange/30' : 'text-stone-400 hover:bg-stone-50'"
+                        class="flex-1 py-2.5 text-xs font-bold rounded-t-xl transition-all duration-300">📍
+                        地點詳情</button>
+                    <button @click="activeTab='plan'"
+                        :class="activeTab==='plan' ? 'bg-orange text-white shadow-lg shadow-orange/30' : 'text-stone-400 hover:bg-stone-50'"
+                        class="flex-1 py-2.5 text-xs font-bold rounded-t-xl transition-all duration-300 relative">
+                        🗓 我的行程
+                        <span x-show="itinerary.length > 0" x-text="itinerary.length"
+                            class="absolute -top-1 -right-1 bg-coral text-white text-[10px] rounded-full w-5 h-5 flex items-center justify-center font-black border-2 border-white"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- TAB: 地點詳情 -->
+            <div x-show="activeTab==='detail'" class="flex-1 overflow-y-auto thin-scroll bg-white">
+                <template x-if="!selectedLoc">
+                    <div
+                        class="flex flex-col items-center justify-center h-full text-stone-300 gap-4 p-8 text-center animate-fade-up">
+                        <div class="w-20 h-20 bg-stone-50 rounded-full flex items-center justify-center text-5xl">👆
+                        </div>
+                        <p class="text-sm font-bold text-stone-400 leading-relaxed text-balance">請點選地圖上的標記<br>獲取美食與景點資訊
+                        </p>
+                    </div>
+                </template>
+
+                <template x-if="selectedLoc">
+                    <div class="p-6 animate-fade-up">
+                        <div class="relative group mb-5">
+                            <img :src="'./香港/' + selectedLoc.image"
+                                class="w-full h-48 object-cover rounded-3xl shadow-xl transition-transform duration-500 group-hover:scale-[1.02]">
+                            <div class="absolute top-4 left-4">
+                                <span
+                                    class="px-3 py-1.5 rounded-full bg-white/95 backdrop-blur shadow-sm text-[10px] font-black text-orange uppercase tracking-widest"
+                                    x-text="selectedLoc.type === 'food' ? '🍜 美食' : (selectedLoc.type === 'attraction' ? '🏛️ 景點' : '🛍️ 購物')"></span>
+                            </div>
+                        </div>
+
+                        <h3 class="text-2xl font-black text-stone-900 leading-tight mb-2" x-text="selectedLoc.name">
+                        </h3>
+                        <div class="flex flex-col gap-1.5 mb-5">
+                            <p class="text-xs text-stone-400 font-bold flex items-center gap-1.5">
+                                <span class="text-orange">📍</span> <span x-text="selectedLoc.address"></span>
+                            </p>
+                            <p class="text-xs text-stone-400 font-bold flex items-center gap-1.5">
+                                <span class="text-orange">⏱</span> 建議停留 <span x-text="selectedLoc.duration"></span> 分鐘
+                            </p>
+                        </div>
+
+                        <p class="text-stone-600 text-sm leading-relaxed mb-8 bg-stone-50 p-4 rounded-2xl border border-stone-100"
+                            x-text="selectedLoc.desc"></p>
+
+                        <button @click="addToItinerary(selectedLoc.id)" :disabled="isInItinerary(selectedLoc.id)"
+                            :class="isInItinerary(selectedLoc.id) ? 'bg-stone-200 text-stone-400 cursor-not-allowed' : 'bg-gradient-to-r from-orange to-coral hover:shadow-xl active:scale-95 text-white'"
+                            class="w-full py-4 px-6 font-black rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2">
+                            <span x-text="isInItinerary(selectedLoc.id) ? '已在行程中' : '﹢ 加入今日行程'"></span>
+                        </button>
+                    </div>
+                </template>
+            </div>
+
+            <!-- TAB: 我的行程 -->
+            <div x-show="activeTab==='plan'" class="flex-1 flex flex-col overflow-hidden bg-white">
+                <!-- 行程清單 -->
+                <div class="flex-1 overflow-y-auto thin-scroll px-4 pt-5 space-y-2">
+                    <template x-if="itinerary.length === 0">
+                        <div class="flex flex-col items-center justify-center h-48 text-stone-300 gap-4 text-center">
+                            <div class="text-6xl filter grayscale opacity-50">🗓️</div>
+                            <p class="text-sm font-bold text-stone-400 leading-relaxed">行程空空如也<br>快去地圖上捕捉你想去的地方</p>
+                        </div>
+                    </template>
+                    <template x-for="(item, idx) in itinerary" :key="item.id">
+                        <div
+                            class="bg-stone-50 rounded-2xl px-4 py-3.5 flex items-center gap-4 border border-stone-100 group animate-fade-up">
+                            <div class="w-7 h-7 rounded-xl bg-orange text-white text-xs font-black flex items-center justify-center flex-shrink-0 shadow-md shadow-orange/20"
+                                x-text="idx+1"></div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-black text-stone-800 truncate" x-text="item.name"></p>
+                                <p class="text-[10px] font-bold text-stone-400 uppercase tracking-widest mt-0.5"
+                                    x-text="`停留 ${item.duration} MIN`"></p>
+                            </div>
+                            <button @click="removeFromItinerary(item.id)"
+                                class="opacity-0 group-hover:opacity-100 transition-opacity text-stone-300 hover:text-coral text-2xl font-light">
+                                ×
+                            </button>
+                        </div>
+                    </template>
+
+                    <!-- 自動規劃結果區 -->
+                    <div id="optimized-plan" class="mt-8 pb-10 space-y-4">
+                        <!-- 由 JS 動態生成 -->
+                    </div>
+                </div>
+
+                <!-- 底部清除按鈕 -->
+                <div x-show="itinerary.length > 0" class="flex-shrink-0 p-4 bg-stone-50 border-t border-stone-100">
+                    <button @click="clearItinerary()"
+                        class="w-full py-2.5 text-[10px] font-black text-stone-400 hover:text-coral hover:bg-white border-2 border-stone-200 hover:border-coral rounded-xl transition-all uppercase tracking-widest">
+                        🗑 清除全部行程
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ===== RIGHT: MAP (Auto flex) ===== -->
+        <div id="map-wrap" class="flex-1 relative">
+            <div id="map" class="absolute inset-0"></div>
+
+            <!-- Floating stats box -->
+            <div x-show="itinerary.length > 0" x-transition
+                class="absolute bottom-10 left-10 z-[999] hidden sm:flex flex-col gap-2 pointer-events-none">
+                <div
+                    class="bg-white/90 backdrop-blur-xl border border-white p-4 rounded-3xl shadow-2xl flex items-center gap-4 animate-fade-up">
+                    <div
+                        class="w-12 h-12 bg-green-500 rounded-2xl flex items-center justify-center text-white text-2xl shadow-lg shadow-green-500/30">
+                        🎯</div>
+                    <div>
+                        <p class="text-[10px] font-black text-stone-400 uppercase tracking-widest">目前已選</p>
+                        <p class="text-xl font-black text-stone-800"><span x-text="itinerary.length"></span> 個景點</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ===== JS LOGIC (All In One) ===== -->
+    <script>
+        // ===== 1. 地點資料庫 (原本在 main.py) =====
+        const LOCATIONS = [
+            { "id": 1, "image": "S__56188931_0.jpg", "name": "點心到 Dim Sum Here", "address": "佐敦廟街26-28號", "lat": 22.3049, "lng": 114.1694, "type": "food", "duration": 60, "desc": "地道佐敦點心名店，以港式點心聞名。" },
+            { "id": 2, "image": "S__56188932_0.jpg", "name": "龍點心", "address": "尖沙咀海防道", "lat": 22.2988, "lng": 114.1720, "type": "food", "duration": 60, "desc": "尖沙咀人氣點心店。" },
+            { "id": 3, "image": "S__56188933_0.jpg", "name": "蘭芳園 Lan Fong Yuen", "address": "中環結志街2號", "lat": 22.2814, "lng": 114.1545, "type": "food", "duration": 45, "desc": "發明絲襪奶茶的傳奇茶餐廳，中環必訪。" },
+            { "id": 4, "image": "S__56188934_0.jpg", "name": "榕哥陳皮燒鵝", "address": "佐敦", "lat": 22.3062, "lng": 114.1710, "type": "food", "duration": 60, "desc": "以陳皮燒鵝聞名的佐敦特色食肆。" },
+            { "id": 5, "image": "S__56188935_0.jpg", "name": "澳洲牛奶公司", "address": "佐敦白加士街47-49號", "lat": 22.3037, "lng": 114.1688, "type": "food", "duration": 45, "desc": "香港傳奇茶餐廳，炒蛋多士與燉蛋是招牌。" },
+            { "id": 6, "image": "S__56188936_0.jpg", "name": "澳牛炒蛋", "address": "佐敦白加士街47-49號", "lat": 22.3037, "lng": 114.1688, "type": "food", "duration": 30, "desc": "澳洲牛奶公司招牌滑蛋套餐。" },
+            { "id": 7, "image": "S__56188937_0.jpg", "name": "十三姨 Lady 13 Kitchen", "address": "佐敦白加士街120-122號", "lat": 22.3052, "lng": 114.1700, "type": "food", "duration": 60, "desc": "佐敦特色港式料理小館。" },
+            { "id": 8, "image": "S__56188938_0.jpg", "name": "甘牌燒鵝 Kam's Roast Goose", "address": "灣仔軒尼詩道226號", "lat": 22.2777, "lng": 114.1733, "type": "food", "duration": 60, "desc": "米芝蓮推介燒鵝名店，皮脆肉嫩。" },
+            { "id": 9, "image": "S__56188939_0.jpg", "name": "勝香園 Sing Heung Yuen", "address": "中環美輪街2號", "lat": 22.2835, "lng": 114.1554, "type": "food", "duration": 45, "desc": "中環隱世茶餐廳，番茄湯麵是傳奇。" },
+            { "id": 10, "image": "S__56188940_0.jpg", "name": "勝香園番茄麵", "address": "中環美輪街2號", "lat": 22.2835, "lng": 114.1554, "type": "food", "duration": 30, "desc": "勝香園人氣招牌番茄湯底麵食。" },
+            { "id": 11, "image": "S__56188942_0.jpg", "name": "德發牛丸粉麵", "address": "尖沙咀海防道390號", "lat": 22.3019, "lng": 114.1725, "type": "food", "duration": 45, "desc": "手打牛丸彈牙鮮美，尖沙咀平民美食。" },
+            { "id": 12, "image": "S__56188943_0.jpg", "name": "瑞記咖啡 Shui Kee Coffee", "address": "上環皇后大道中2/F", "lat": 22.2862, "lng": 114.1515, "type": "food", "duration": 30, "desc": "上環百年老字號，西多士一絕。" },
+            { "id": 13, "image": "S__56188944_0.jpg", "name": "蓮香樓 Lin Heung Lau", "address": "中環威靈頓街160號", "lat": 22.2830, "lng": 114.1531, "type": "food", "duration": 75, "desc": "百年老字號廣式茶樓，傳統推車點心。" },
+            { "id": 14, "image": "S__56188948.jpg", "name": "Guilt Free Bakery", "address": "尖沙咀加拿分道49號", "lat": 22.2998, "lng": 114.1745, "type": "food", "duration": 30, "desc": "葡式蛋撻專門店，不甜不膩剛剛好。" },
+            { "id": 15, "image": "S__56188953_0.jpg", "name": "嗇色園黃大仙祠", "address": "香港竹園竹園村二號", "lat": 22.3424, "lng": 114.1936, "type": "attraction", "duration": 90, "desc": "香港著名道觀，香火鼎盛，祈福求籤。" },
+            { "id": 16, "image": "S__56188954_0.jpg", "name": "石板街 (砵典乍街)", "address": "中環砵典乍街", "lat": 22.2828, "lng": 114.1543, "type": "attraction", "duration": 45, "desc": "百年花崗岩石板路，中環歷史地標。" },
+            { "id": 17, "image": "S__56188955_0.jpg", "name": "中環半山扶手電梯", "address": "中環樂成行", "lat": 22.2817, "lng": 114.1519, "type": "attraction", "duration": 30, "desc": "全球最長戶外扶手電梯，連接中環至半山。" },
+            { "id": 18, "image": "S__56188956_0.jpg", "name": "置地廣場 LANDMARK", "address": "中環", "lat": 22.2808, "lng": 114.1580, "type": "shopping", "duration": 60, "desc": "中環頂級購物商場，品牌雲集。" },
+            { "id": 19, "image": "S__56188958_0.jpg", "name": "杜莎夫人蠟像館", "address": "太平山頂凌霄閣", "lat": 22.2707, "lng": 114.1431, "type": "attraction", "duration": 120, "desc": "山頂凌霄閣內著名蠟像館，與明星同框。" },
+            { "id": 20, "image": "S__56188959_0.jpg", "name": "太平山頂 Victoria Peak", "address": "香港山頂", "lat": 22.2715, "lng": 114.1453, "type": "attraction", "duration": 90, "desc": "俯瞰香港全景，最經典打卡地標。" },
+            { "id": 21, "image": "S__56188960_0.jpg", "name": "山頂纜車 Peak Tram", "address": "中環花園道纜車總站", "lat": 22.2797, "lng": 114.1541, "type": "attraction", "duration": 30, "desc": "百年登山纜車，俯瞰香港島全貌。" },
+            { "id": 22, "image": "S__56188961_0.jpg", "name": "維多利亞港夜景", "address": "尖沙咀海濱長廊", "lat": 22.2934, "lng": 114.1738, "type": "attraction", "duration": 60, "desc": "全球最美夜景之一，必看幻彩詠香江。" },
+            { "id": 23, "image": "S__56188962_0.jpg", "name": "尖沙咀鐘樓", "address": "尖沙咀碼頭", "lat": 22.2937, "lng": 114.1717, "type": "attraction", "duration": 30, "desc": "殖民地時期歷史建築，維港地標。" },
+            { "id": 24, "image": "S__56188966.jpg", "name": "星巴克 (雪廠街)", "address": "中環雪廠街22號", "lat": 22.2817, "lng": 114.1574, "type": "food", "duration": 30, "desc": "中環百年大樓內的特色星巴克門市。" }
+        ];
+
+        // ===== 2. 演算法工具 (原本在 main.py) =====
+        function haversine(lat1, lon1, lat2, lon2) {
+            const R = 6371; // km
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLon = (lon2 - lon1) * Math.PI / 180;
+            const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        }
+
+        function nearestNeighbor(locs) {
+            if (!locs.length) return [];
+            let unvisited = [...locs];
+            let ordered = [unvisited.sort((a, b) => b.lat - a.lat)[0]]; // 從最北開始
+            unvisited = unvisited.filter(l => l.id !== ordered[0].id);
+            while (unvisited.length) {
+                let last = ordered[ordered.length - 1];
+                unvisited.sort((a, b) => haversine(last.lat, last.lng, a.lat, a.lng) - haversine(last.lat, last.lng, b.lat, b.lng));
+                ordered.push(unvisited.shift());
+            }
+            return ordered;
+        }
+
+        function getTransport(dist) {
+            if (dist < 0.5) return `🚶 步行約 ${Math.round(dist * 1000 / 80)} 分鐘`;
+            if (dist < 3) return `🚌 巴士約 ${Math.round(dist / 0.3)} 分鐘`;
+            return `🚇 地鐵約 ${Math.round(dist / 0.8)} 分鐘`;
+        }
+
+        // ===== 3. Alpine.js State =====
+        function appState() {
+            return {
+                activeTab: 'detail',
+                selectedLoc: null,
+                itinerary: [],
+                _timer: null,
+
+                init() {
+                    this.$watch('itinerary', () => {
+                        this.renderPlan();
+                    });
+                },
+
+                isInItinerary(id) {
+                    return this.itinerary.some(i => i.id === id);
+                },
+
+                addToItinerary(id) {
+                    if (this.isInItinerary(id)) return;
+                    const loc = LOCATIONS.find(l => l.id === id);
+                    this.itinerary.push(loc);
+                    updateMarkerState(id, true);
+                    this.activeTab = 'plan';
+                },
+
+                removeFromItinerary(id) {
+                    this.itinerary = this.itinerary.filter(i => i.id !== id);
+                    updateMarkerState(id, false);
+                },
+
+                clearItinerary() {
+                    this.itinerary.forEach(i => updateMarkerState(i.id, false));
+                    this.itinerary = [];
+                    document.getElementById('optimized-plan').innerHTML = '';
+                },
+
+                renderPlan() {
+                    const container = document.getElementById('optimized-plan');
+                    if (this.itinerary.length < 2) {
+                        container.innerHTML = '<p class="text-[10px] text-stone-400 text-center font-black uppercase tracking-widest py-10 border-2 border-dashed border-stone-100 rounded-3xl">需至少 2 個地點以連線</p>';
+                        return;
+                    }
+
+                    const ordered = nearestNeighbor(this.itinerary);
+                    let currentTotalMin = 0;
+                    let currentTime = 9 * 60; // 9:00 AM
+
+                    let html = '<div class="space-y-4 pt-4 border-t-2 border-stone-50"><h4 class="text-[10px] font-black text-orange uppercase tracking-[0.2em] mb-6">優化路線建議</h4>';
+
+                    ordered.forEach((loc, idx) => {
+                        const h = Math.floor(currentTime / 60);
+                        const m = currentTime % 60;
+                        const timeStr = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+
+                        html += `
+                    <div class="relative pl-6 border-l-2 border-stone-100 pb-2">
+                        <div class="absolute -left-[9px] top-0 w-4 h-4 bg-white border-4 border-orange rounded-full"></div>
+                        <div class="bg-stone-50 rounded-2xl p-4 border border-stone-100">
+                            <div class="flex justify-between items-start mb-1">
+                                <span class="text-[10px] font-black text-orange">${timeStr}</span>
+                                <span class="text-[10px] font-black text-stone-300">#${idx + 1}</span>
+                            </div>
+                            <p class="text-sm font-black text-stone-800">${loc.name}</p>
+                            <p class="text-[10px] text-stone-400 font-bold">預計停留 ${loc.duration} 分鐘</p>
+                        </div>
+                    </div>`;
+
+                        currentTime += loc.duration;
+                        currentTotalMin += loc.duration;
+
+                        if (idx < ordered.length - 1) {
+                            const dist = haversine(loc.lat, loc.lng, ordered[idx + 1].lat, ordered[idx + 1].lng);
+                            const trans = getTransport(dist);
+                            const transMin = dist < 0.5 ? Math.round(dist * 1000 / 80) : (dist < 3 ? Math.round(dist / 0.3) : Math.round(dist / 0.8));
+                            currentTime += transMin;
+                            currentTotalMin += transMin;
+
+                            html += `
+                        <div class="py-2 pl-6 flex items-center gap-3">
+                            <div class="w-px h-6 bg-stone-100 border-l-2 border-dashed border-stone-200"></div>
+                            <span class="text-[10px] font-black text-stone-400 bg-stone-50 px-3 py-1 rounded-full border border-stone-100">${trans}</span>
+                        </div>`;
+                        }
+                    });
+
+                    const endH = Math.floor(currentTime / 60);
+                    const endM = currentTime % 60;
+                    html += `
+                <div class="bg-stone-900 rounded-3xl p-6 text-white mt-8 shadow-2xl">
+                    <div class="flex justify-between items-end mb-4">
+                        <div>
+                            <p class="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-1">預計結束</p>
+                            <p class="text-3xl font-black">${endH.toString().padStart(2, '0')}:${endM.toString().padStart(2, '0')}</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] font-black text-stone-500 uppercase tracking-widest mb-1">總用時</p>
+                            <p class="text-xl font-black">${Math.floor(currentTotalMin / 60)}h ${currentTotalMin % 60}m</p>
+                        </div>
+                    </div>
+                </div></div>`;
+
+                    container.innerHTML = html;
+                }
+            };
+        }
+
+        // ========== 4. Leaflet Map ==========
+        const map = L.map('map', { center: [22.31, 114.17], zoom: 13, zoomControl: true });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '© CARTO', subdomains: 'abcd', maxZoom: 19
+        }).addTo(map);
+
+        const markers = {};
+        const TYPE_COLOR = { food: '#FF6B35', attraction: '#9B72CF', shopping: '#F4736C' };
+
+        function getPinIcon(loc, selected = false) {
+            const color = selected ? '#22c55e' : (TYPE_COLOR[loc.type] || '#999');
+            return L.divIcon({
+                className: '', iconSize: [32, 36], iconAnchor: [16, 36], popupAnchor: [0, -38],
+                html: `
+                <div class="pin-wrap${selected ? ' pin-selected' : ''}">
+                    <div class="pin-dot" style="background:linear-gradient(135deg,${color}ee,${color})"></div>
+                    <div class="pin-label">${loc.name}</div>
+                </div>`
+            });
+        }
+
+        function updateMarkerState(id, selected) {
+            const loc = LOCATIONS.find(l => l.id === id);
+            if (loc && markers[id]) markers[id].setIcon(getPinIcon(loc, selected));
+        }
+
+        LOCATIONS.forEach(loc => {
+            const m = L.marker([loc.lat, loc.lng], { icon: getPinIcon(loc) });
+
+            m.on('click', () => {
+                const alpine = document.querySelector('[x-data]')._x_dataStack[0];
+                alpine.selectedLoc = loc;
+                alpine.activeTab = 'detail';
+            });
+
+            m.addTo(map);
+            markers[loc.id] = m;
+        });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-Hant" x-data="appState()" x-init="init()">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>香港一日遊導航 🇭🇰</title>
+    <meta name="description" content="香港 24 個必訪食玩景點地圖，附智慧一日行程規劃器">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Leaflet.js -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- HTMX -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- Alpine.js -->
+    <script defer src="https://unpkg.com/alpinejs@3.13.5/dist/cdn.min.js"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap"
+        rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { tc: ['Noto Sans TC', 'sans-serif'] },
+                    colors: {
+                        cream: '#FFF8F0',
+                        orange: { DEFAULT: '#FF6B35', dark: '#E55A25' },
+                        coral: { DEFAULT: '#E63946', dark: '#C62B37' },
+                        lav: { DEFAULT: '#9B72CF', bg: '#F5F0FD', border: '#E9E0F8' },
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background: #FFF8F0;
+        }
+
+        /* ===== Map ===== */
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* ===== Custom Markers ===== */
+        .pin-wrap {
+            position: relative;
+            width: 32px;
+            height: 36px;
+        }
+
+        .pin-dot {
+            width: 26px;
+            height: 26px;
+            border-radius: 50% 50% 50% 0;
+            transform: rotate(-45deg);
+            border: 2.5px solid white;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            transition: transform 0.15s, box-shadow 0.15s;
+        }
+
+        .pin-label {
+            position: absolute;
+            top: -26px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: white;
+            border-radius: 8px;
+            padding: 2px 6px;
+            font-size: 10px;
+            font-weight: 700;
+            white-space: nowrap;
+            color: #333;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+            opacity: 0;
+            transition: opacity 0.2s;
+            pointer-events: none;
+            max-width: 130px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .pin-selected .pin-dot {
+            background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+            box-shadow: 0 0 0 4px rgba(34, 197, 94, 0.3), 0 6px 16px rgba(0, 0, 0, 0.3) !important;
+        }
+
+        /* ===== Leaflet popup ===== */
+        .leaflet-popup-content-wrapper {
+            border-radius: 16px !important;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15) !important;
+            padding: 0 !important;
+            overflow: hidden;
+            border: none !important;
+        }
+
+        .leaflet-popup-content {
+            margin: 0 !important;
+            width: 280px !important;
+        }
+
+        .leaflet-popup-tip {
+            background: white !important;
+        }
+
+        /* ===== Scrollbar ===== */
+        .thin-scroll::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .thin-scroll::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .thin-scroll::-webkit-scrollbar-thumb {
+            background: #ddd0c4;
+            border-radius: 99px;
+        }
+
+        /* ===== Animations ===== */
+        @keyframes fadeUp {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-fade-up {
+            animation: fadeUp 0.3s ease forwards;
+        }
+
+        /* ===== HTMX indicator ===== */
+        .htmx-indicator {
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .htmx-request .htmx-indicator {
+            opacity: 1;
+        }
+
+        /* ===== Mobile bottom sheet ===== */
+        @media (max-width: 768px) {
+            #main-layout {
+                flex-direction: column !important;
+            }
+
+            #side-panel {
+                width: 100% !important;
+                height: 55vh;
+                border-left: none !important;
+                border-top: 1px solid #E9E0F8;
+            }
+
+            #map-wrap {
+                flex: 1 !important;
+                min-height: 45vh;
+            }
+        }
+    </style>
+</head>
+
+<body class="h-screen flex flex-col overflow-hidden font-tc">
+
+    <!-- ===== HEADER ===== -->
+    <header
+        class="flex-shrink-0 z-20 bg-gradient-to-r from-orange to-coral text-white px-5 py-3 flex items-center justify-between shadow-lg">
+        <div class="flex items-center gap-3">
+            <span class="text-3xl leading-none">🇭🇰</span>
+            <div>
+                <h1 class="text-lg font-black leading-tight">香港一日遊導航</h1>
+                <p class="text-orange-100 text-xs hidden sm:block">點擊地圖標記 → 系統自動規劃最順路線</p>
+            </div>
+        </div>
+        <div class="flex flex-wrap gap-1.5 text-xs justify-end">
+            <span class="bg-white/20 rounded-full px-2.5 py-1">🔴 美食</span>
+            <span class="bg-white/20 rounded-full px-2.5 py-1">🟣 景點</span>
+            <span class="bg-white/20 rounded-full px-2.5 py-1">🟢 已選</span>
+        </div>
+    </header>
+
+    <!-- ===== MAIN (left panel + right map) ===== -->
+    <main id="main-layout" class="flex-1 flex overflow-hidden">
+
+        <!-- ===== LEFT PANEL (30%) ===== -->
+        <aside id="side-panel"
+            class="w-[320px] flex-shrink-0 bg-lav-bg border-r border-lav-border flex flex-col overflow-hidden z-10 shadow-xl">
+
+            <!-- Panel tabs -->
+            <div class="flex-shrink-0 bg-white border-b border-lav-border px-4 pt-4 pb-0">
+                <h2 class="font-black text-stone-800 text-sm mb-3">📅 智慧行程規劃器</h2>
+                <div class="flex">
+                    <button @click="activeTab='detail'"
+                        :class="activeTab==='detail' ? 'border-b-2 border-orange text-orange font-bold' : 'text-stone-400 hover:text-stone-600'"
+                        class="flex-1 py-2 text-sm transition-colors text-center">📍 地點詳情</button>
+                    <button @click="activeTab='plan'"
+                        :class="activeTab==='plan' ? 'border-b-2 border-orange text-orange font-bold' : 'text-stone-400 hover:text-stone-600'"
+                        class="flex-1 py-2 text-sm transition-colors text-center relative">
+                        🗓 我的行程
+                        <span x-show="itinerary.length > 0" x-text="itinerary.length"
+                            class="absolute top-1 right-3 bg-coral text-white text-xs rounded-full w-4 h-4 flex items-center justify-center font-bold"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- TAB: 地點詳情 -->
+            <div x-show="activeTab==='detail'" class="flex-1 overflow-y-auto thin-scroll">
+                <div id="location-detail">
+                    <div class="flex flex-col items-center justify-center h-52 text-stone-300 gap-3 p-6 text-center">
+                        <span class="text-5xl">👆</span>
+                        <p class="text-sm font-medium text-stone-400">點擊右側地圖上的標記<br>這裡會顯示地點詳情</p>
+                    </div>
+                </div>
+                <div id="detail-loading" class="htmx-indicator flex justify-center py-6">
+                    <div class="w-6 h-6 border-2 border-orange border-t-transparent rounded-full animate-spin"></div>
+                </div>
+            </div>
+
+            <!-- TAB: 我的行程 -->
+            <div x-show="activeTab==='plan'" class="flex-1 flex flex-col overflow-hidden">
+
+                <!-- 行程清單 -->
+                <div class="flex-1 overflow-y-auto thin-scroll px-3 pt-3 space-y-1.5">
+                    <template x-if="itinerary.length === 0">
+                        <div class="flex flex-col items-center justify-center h-48 text-stone-300 gap-3 text-center">
+                            <span class="text-5xl">🗺️</span>
+                            <p class="text-sm">尚未加入任何地點<br>點擊地圖標記並加入行程</p>
+                        </div>
+                    </template>
+                    <template x-for="(item, idx) in itinerary" :key="item.id">
+                        <div
+                            class="bg-white rounded-xl px-3 py-2.5 flex items-center gap-3 shadow-sm border border-lav-border group animate-fade-up">
+                            <div class="w-6 h-6 rounded-full bg-gradient-to-br from-orange to-coral text-white text-xs font-bold flex items-center justify-center flex-shrink-0"
+                                x-text="idx+1"></div>
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-semibold text-stone-800 truncate" x-text="item.name"></p>
+                                <p class="text-xs text-stone-400" x-text="`⏱ ${item.duration} 分鐘`"></p>
+                            </div>
+                            <button @click="removeFromItinerary(item.id)"
+                                class="opacity-0 group-hover:opacity-100 transition-opacity text-stone-300 hover:text-coral text-xl leading-none font-light">
+                                ×
+                            </button>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- 清除按鈕 -->
+                <div x-show="itinerary.length > 0" class="flex-shrink-0 px-3 pt-2 pb-2">
+                    <button @click="clearItinerary()"
+                        class="w-full py-1.5 text-xs text-stone-400 hover:text-coral border border-stone-200 hover:border-coral rounded-xl transition-colors">
+                        🗑 清除全部行程
+                    </button>
+                </div>
+
+                <!-- 自動規劃結果 (auto-updated) -->
+                <div class="flex-shrink-0 overflow-y-auto thin-scroll border-t border-lav-border bg-white max-h-[46vh]">
+                    <div id="plan-result" class="px-3 py-3">
+                        <template x-if="itinerary.length < 2">
+                            <p class="text-xs text-stone-400 text-center py-4">新增 2 個以上地點即可自動規劃</p>
+                        </template>
+                    </div>
+                    <div id="plan-loading" class="htmx-indicator flex justify-center py-3">
+                        <div class="flex items-center gap-2 text-xs text-stone-400">
+                            <div class="w-4 h-4 border-2 border-orange border-t-transparent rounded-full animate-spin">
+                            </div>
+                            計算最佳路線中…
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ===== RIGHT: MAP (70%) ===== -->
+        <div id="map-wrap" class="flex-1 relative">
+            <div id="map" class="absolute inset-0"></div>
+            <!-- Selected count badge -->
+            <div x-show="itinerary.length > 0" x-transition
+                class="absolute top-4 right-4 z-[999] bg-green-500 text-white rounded-full px-4 py-2 text-sm font-bold shadow-lg pointer-events-none">
+                ✅ 已選 <span x-text="itinerary.length"></span> 個
+            </div>
+        </div>
+
+    </main>
+
+    <!-- ===== SCRIPTS ===== -->
+    <script>
+        const LOCATIONS = {{ locations_json | safe }};
+
+        // ========== Alpine.js State ==========
+        function appState() {
+            return {
+                activeTab: 'detail',
+                itinerary: [],
+                _planTimer: null,
+
+                init() {
+                    // Watch itinerary changes → auto trigger plan
+                    this.$watch('itinerary', () => this.schedulePlan());
+                },
+
+                schedulePlan() {
+                    // Debounce: wait 500ms after last change before calling /plan
+                    clearTimeout(this._planTimer);
+                    if (this.itinerary.length < 2) {
+                        document.getElementById('plan-result').innerHTML =
+                            '<p class="text-xs text-stone-400 text-center py-4">新增 2 個以上地點即可自動規劃</p>';
+                        return;
+                    }
+                    this._planTimer = setTimeout(() => this.triggerPlan(), 500);
+                },
+
+                triggerPlan() {
+                    const ids = this.itinerary.map(i => i.id).join(',');
+                    htmx.ajax('POST', '/plan', {
+                        target: '#plan-result',
+                        swap: 'innerHTML',
+                        indicator: '#plan-loading',
+                        values: { ids }
+                    });
+                    this.activeTab = 'plan';
+                },
+
+                addToItinerary(id, name, duration) {
+                    if (this.itinerary.find(i => i.id === id)) return;
+                    this.itinerary.push({ id, name, duration });
+                    updateMarkerStyle(id, true);
+                    this.activeTab = 'plan';
+                },
+
+                removeFromItinerary(id) {
+                    this.itinerary = this.itinerary.filter(i => i.id !== id);
+                    updateMarkerStyle(id, false);
+                },
+
+                clearItinerary() {
+                    this.itinerary.forEach(i => updateMarkerStyle(i.id, false));
+                    this.itinerary = [];
+                    document.getElementById('plan-result').innerHTML =
+                        '<p class="text-xs text-stone-400 text-center py-4">新增 2 個以上地點即可自動規劃</p>';
+                }
+            };
+        }
+
+        // Global bridge: called from HTMX-rendered HTML button
+        function addToItinerary(id, name, duration) {
+            document.dispatchEvent(new CustomEvent('add-location', { detail: { id, name, duration } }));
+        }
+        document.addEventListener('add-location', e => {
+            const alpine = document.querySelector('[x-data]')?._x_dataStack?.[0];
+            if (alpine) alpine.addToItinerary(e.detail.id, e.detail.name, e.detail.duration);
+        });
+
+        // ========== Leaflet Map ==========
+        const map = L.map('map', { center: [22.32, 114.17], zoom: 13, zoomControl: true });
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+            attribution: '© OpenStreetMap contributors © CARTO',
+            subdomains: 'abcd', maxZoom: 19
+        }).addTo(map);
+
+        const TYPE_COLOR = { food: '#FF6B35', attraction: '#9B72CF', shopping: '#F4736C' };
+        const leafletMarkers = {};
+
+        function makePinIcon(loc, selected = false) {
+            const color = selected ? '#22c55e' : (TYPE_COLOR[loc.type] || '#999');
+            const shadow = selected
+                ? '0 0 0 4px rgba(34,197,94,0.3), 0 6px 16px rgba(0,0,0,0.3)'
+                : '0 4px 12px rgba(0,0,0,0.22)';
+            return L.divIcon({
+                className: '',
+                iconSize: [32, 36],
+                iconAnchor: [16, 36],
+                popupAnchor: [0, -38],
+                html: `
+                <div class="pin-wrap${selected ? ' pin-selected' : ''}">
+                    <div class="pin-dot" style="background:linear-gradient(135deg,${color}ee,${color});box-shadow:${shadow}"></div>
+                    <div class="pin-label">${loc.name}</div>
+                </div>`
+            });
+        }
+
+        function updateMarkerStyle(id, selected) {
+            const loc = LOCATIONS.find(l => l.id === id);
+            if (loc && leafletMarkers[id]) leafletMarkers[id].setIcon(makePinIcon(loc, selected));
+        }
+
+        LOCATIONS.forEach(loc => {
+            const m = L.marker([loc.lat, loc.lng], { icon: makePinIcon(loc), title: loc.name });
+
+            m.on('mouseover', function () {
+                this.getElement()?.querySelector('.pin-label')?.style.setProperty('opacity', '1');
+            });
+            m.on('mouseout', function () {
+                this.getElement()?.querySelector('.pin-label')?.style.setProperty('opacity', '0');
+            });
+            m.on('click', function () {
+                // Load location detail via HTMX
+                htmx.ajax('GET', `/location/${loc.id}`, {
+                    target: '#location-detail',
+                    swap: 'innerHTML',
+                    indicator: '#detail-loading'
+                });
+                // Switch to detail tab
+                const alpine = document.querySelector('[x-data]')?._x_dataStack?.[0];
+                if (alpine) alpine.activeTab = 'detail';
+            });
+
+            m.addTo(map);
+            leafletMarkers[loc.id] = m;
+        });
+    </script>
+</body>
+
+</html>
